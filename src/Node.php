@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once 'Renderer.php';
+namespace ExpoOne;
 
 /**
  * Node with better type safety and separation of concerns

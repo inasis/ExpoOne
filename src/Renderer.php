@@ -1,20 +1,40 @@
 <?php
 declare(strict_types=1);
 
+namespace ExpoOne;
+
 /**
- * Template renderer with filter support
+ * Renderer is responsible for transforming a parsed Node tree
+ * into executable PHP/HTML code.
+ *
+ * It supports:
+ * - Dynamic variable interpolation with filters (`{$var|filter}`)
+ * - Inline PHP blocks (`{@ code }`)
+ * - Conditional rendering (`cond` attributes)
+ * - Loop rendering (`loop` attributes)
+ * - Asset management via <load> and <unload> tags
+ * - Automatic escaping and HTML-safe output
  */
 class Renderer
 {
+    /** @var array<string, string> Compiled regex patterns for variable and PHP block matching */
     private const COMPILED_REGEX = [
         'php_block' => '/\{@\s*([\s\S]*?)\s*\}/s',
         'variable' => '/\{\$([^}]+)\}/s'
     ];
 
+    /** @var array<string, bool> HTML void elements (self-closing tags) */
     private array $voidElements;
+
+    /** @var array<int, array<int, array<string, string>>> Collected CSS files grouped by index */
     private array $cssFiles = [];
+
+    /** @var array<string, array<int, array<int, string>>> Collected JS files grouped by type (head/body) and index */
     private array $jsFiles = [];
 
+    /**
+     * Initialize renderer with void HTML elements
+     */
     public function __construct()
     {
         $this->voidElements = array_flip([
@@ -23,6 +43,12 @@ class Renderer
         ]);
     }
 
+    /**
+     * Render a Node into PHP/HTML string
+     *
+     * @param Node $node The node to render
+     * @return string Rendered HTML or PHP code
+     */
     public function render(Node $node): string
     {
         switch ($node->type) {
@@ -39,17 +65,21 @@ class Renderer
         }
     }
 
+    /**
+     * Render plain text content, replacing inline PHP and variable filters
+     *
+     * @param string $content Text content to render
+     * @return string PHP code after replacements
+     * @throws ParseException If PHP code in block is invalid
+     */
     private function renderTextContent(string $content): string
     {
-        // Handle PHP blocks with security validation
-        // Pattern supports multi-line blocks with proper whitespace handling        
         $content = preg_replace_callback(self::COMPILED_REGEX['php_block'], function ($m) {
             $code = trim($m[1]);
             Validator::validatePhpCode($code);
             return "<?php\n" . $code . "\n?>";
         }, $content);
 
-            // Handle variable interpolation with filters
         $content = preg_replace_callback(self::COMPILED_REGEX['variable'], function ($m) {
             $expr = trim($m[1]);
             $processedCode = Filter::parseVariableExpression($expr);
@@ -59,39 +89,47 @@ class Renderer
         return $content;
     }
 
+    /**
+     * Render HTML comments, removing `//` style inline comments
+     *
+     * @param string $content Comment content
+     * @return string Sanitized HTML comment
+     */
     private function renderComment(string $content): string
     {
         $cleanContent = preg_replace('/\/\/.*$/s', '', $content);
         return $cleanContent ? "<!--{$cleanContent}-->" : '';
     }
 
+    /**
+     * Render an element node with full attribute, loop, and condition support
+     *
+     * @param Node $node
+     * @return string Rendered HTML or PHP block
+     * @throws ParseException If invalid loop/cond syntax or missing attributes
+     */
     private function renderElement(Node $node): string
     {
         $inner = implode('', array_map([$this, 'render'], $node->children));
 
-        // Handle <load> tag - collect for batch output
         if (strtolower($node->tagName ?? '') === 'load') {
             return $this->collectLoadTag($node);
         }
 
-        // Handle <unload> tag - generates comment for documentation
         if (strtolower($node->tagName ?? '') === 'unload') {
             return $this->renderUnloadTag($node);
         }
 
-        // Handle <block> tag - render only children (tag wrapper removed)
         if (strtolower($node->tagName ?? '') === 'block') {
             return $this->renderBlockElement($node, $inner);
         }
 
         $attrs = $this->renderAttributes($node->attributes, $node->tagName ?? '');
 
-        // Handle loop rendering (must be processed before cond)
         if (isset($node->attributes['loop'])) {
             return $this->renderLoopElement($node, $inner);
         }
 
-        // Handle conditional rendering
         if (isset($node->attributes['cond'])) {
             $cond = trim($node->attributes['cond']);
             Validator::validatePhpCode($cond);
@@ -101,7 +139,6 @@ class Renderer
             return "\n<?php if({$cond}): ?><{$node->tagName}{$attrs}>{$inner}</{$node->tagName}><?php endif; ?>\n";
         }
 
-        // Handle void elements
         if (isset($this->voidElements[strtolower($node->tagName ?? '')])) {
             return "<{$node->tagName}{$attrs}>\n";
         }
@@ -110,7 +147,11 @@ class Renderer
     }
 
     /**
-     * Collect <load> tag information to generate sorted output later
+     * Collects CSS/JS <load> tags for later injection
+     *
+     * @param Node $node
+     * @return string Always returns an empty string
+     * @throws ParseException If required attributes are missing or file type is invalid
      */
     private function collectLoadTag(Node $node): string
     {
@@ -131,68 +172,52 @@ class Renderer
                 'target' => $targetEscaped,
                 'media' => $mediaEscaped
             ];
-            
         } elseif ($extension === 'js') {
             $type = $node->attributes['type'] ?? 'head';
             $targetEscaped = htmlspecialchars($target, ENT_QUOTES, 'UTF-8');
             
             $this->jsFiles[$type][$index][] = $targetEscaped;
-            
         } else {
             throw new ParseException("Unsupported file type in <load>: {$extension}. Only .css and .js are supported.");
         }
         
-        // Return empty string - files will be injected later
         return '';
     }
 
     /**
-     * Inject collected CSS and JS files into appropriate positions
+     * Injects all collected <load> assets (CSS/JS) into final HTML
+     *
+     * @param string $html The compiled HTML
+     * @return string HTML with injected <link> and <script> tags
      */
     public function injectAssets(string $html): string
     {
-        // Generate CSS tags
         $cssOutput = $this->generateCssTags();
-        
-        // Generate JS tags
         $headJsOutput = $this->generateJsTags('head');
         $bodyJsOutput = $this->generateJsTags('body');
         
-        // Inject CSS and head JS after <head> tag
         if (!empty($cssOutput) || !empty($headJsOutput)) {
             $headAssets = trim($cssOutput . "\n" . $headJsOutput);
             if ($headAssets) {
-                $html = preg_replace(
-                    '/(<\/head[^>]*>)/i',
-                    $headAssets ."\n$1",
-                    $html,
-                    1
-                );
+                $html = preg_replace('/(<\/head[^>]*>)/i', $headAssets . "\n$1", $html, 1);
             }
         }
         
-        // Inject body JS before </body> tag
         if (!empty($bodyJsOutput)) {
-            $html = preg_replace(
-                '/(<\/body>)/i',
-                $bodyJsOutput . "\n$1",
-                $html,
-                1
-            );
+            $html = preg_replace('/(<\/body>)/i', $bodyJsOutput . "\n$1", $html, 1);
         }
         
         return $html;
     }
 
     /**
-     * Generate sorted CSS link tags
+     * Generates all CSS <link> tags sorted by index
+     *
+     * @return string Combined CSS link tags
      */
     private function generateCssTags(): string
     {
-        if (empty($this->cssFiles)) {
-            return '';
-        }
-        
+        if (empty($this->cssFiles)) return '';
         ksort($this->cssFiles);
         $output = [];
         
@@ -201,19 +226,18 @@ class Renderer
                 $output[] = "<link rel=\"stylesheet\" href=\"{$file['target']}\" media=\"{$file['media']}\">\n";
             }
         }
-        
         return implode("\n", $output);
     }
 
     /**
-     * Generate sorted JS script tags
+     * Generates all JS <script> tags sorted by index and type
+     *
+     * @param string $type Either 'head' or 'body'
+     * @return string Combined JS script tags
      */
     private function generateJsTags(string $type): string
     {
-        if (!isset($this->jsFiles[$type]) || empty($this->jsFiles[$type])) {
-            return '';
-        }
-        
+        if (!isset($this->jsFiles[$type]) || empty($this->jsFiles[$type])) return '';
         ksort($this->jsFiles[$type]);
         $output = [];
         
@@ -222,12 +246,15 @@ class Renderer
                 $output[] = "<script src=\"{$file}\"></script>";
             }
         }
-        
         return implode("\n", $output);
     }
 
     /**
-     * Render <unload> tag - generates comment for documentation
+     * Render <unload> tags for documentation or debugging purposes
+     *
+     * @param Node $node
+     * @return string HTML comment describing unloaded resource
+     * @throws ParseException If unsupported file type is used
      */
     private function renderUnloadTag(Node $node): string
     {
@@ -238,127 +265,122 @@ class Renderer
         $target = htmlspecialchars($node->attributes['target'], ENT_QUOTES, 'UTF-8');
         $extension = strtolower(pathinfo($target, PATHINFO_EXTENSION));
 
-        if ($extension === 'css' || $extension === 'js') {
+        if (in_array($extension, ['css', 'js'], true)) {
             return "<!-- Unload: {$target} -->";
-        } else {
-            throw new ParseException("Unsupported file type in <unload>: {$extension}");
         }
+
+        throw new ParseException("Unsupported file type in <unload>: {$extension}");
     }
 
     /**
-     * Render <block> element - only outputs children, removes wrapper tag
-     * Supports loop and cond attributes without rendering the block tag itself
+     * Render <block> tag, which removes the wrapper and only outputs children
+     * Supports `loop` and `cond` attributes for flow control.
+     *
+     * @param Node $node
+     * @param string $inner Inner HTML to render
+     * @return string PHP code with conditional/loop constructs
+     * @throws ParseException If invalid loop or condition expression
      */
     private function renderBlockElement(Node $node, string $inner): string
     {
-        // Handle loop on block
         if (isset($node->attributes['loop'])) {
             $loopExpr = trim($node->attributes['loop']);
             Validator::validatePhpCode($loopExpr);
-
-            // Check for 'as' keyword or '=>' for foreach loop
             if (strpos($loopExpr, ' as ') !== false) {
-                // Native PHP foreach syntax: array as $val or array as $key=>$val
                 return "\n<?php foreach({$loopExpr}): ?>\n{$inner}\n<?php endforeach; ?>\n";
             } elseif (strpos($loopExpr, '=>') !== false) {
-                // Custom syntax with =>: array=>$val or array=>$key,$val
                 list($array, $vars) = array_map('trim', explode('=>', $loopExpr, 2));
-                
                 if (strpos($vars, ',') !== false) {
                     list($key, $val) = array_map('trim', explode(',', $vars, 2));
                     $phpLoop = "foreach({$array} as {$key} => {$val})";
                 } else {
                     $phpLoop = "foreach({$array} as {$vars})";
                 }
-                
                 return "\n<?php {$phpLoop}: ?>\n{$inner}\n<?php endforeach; ?>\n";
-            } else {
-                // for loop: $i=0;$i<10;$i++
-                return "\n<?php for({$loopExpr}): ?>\n{$inner}\n<?php endfor; ?>\n";
             }
+            return "\n<?php for({$loopExpr}): ?>\n{$inner}\n<?php endfor; ?>\n";
         }
 
-        // Handle cond on block
         if (isset($node->attributes['cond'])) {
             $cond = trim($node->attributes['cond']);
             Validator::validatePhpCode($cond);
             return "\n<?php if({$cond}): ?>\n{$inner}\n<?php endif; ?>\n";
         }
 
-        // No attributes - just return children
         return $inner;
     }
-    
+
     /**
-     * Render element with loop attribute
-     * Supports:
-     * - loop="array=>$val" (foreach without key)
-     * - loop="array=>$key,$val" (foreach with key)
-     * - loop="array as $val" (foreach without key)
-     * - loop="array as $key=>$val" (foreach with key)
-     * - loop="$i=0;$i<100;$i++" (for loop)
+     * Render looped HTML elements (for or foreach)
+     *
+     * @param Node $node
+     * @param string $inner Rendered child HTML
+     * @return string PHP code with loop structure
+     * @throws ParseException If invalid PHP loop syntax
      */
     private function renderLoopElement(Node $node, string $inner): string
     {
         $loopExpr = trim($node->attributes['loop']);
         Validator::validatePhpCode($loopExpr);
-
-        // Remove loop attribute from rendering
         $attrsWithoutLoop = $node->attributes;
         unset($attrsWithoutLoop['loop']);
         $attrs = $this->renderAttributes($attrsWithoutLoop, $node->tagName ?? '');
 
-        // Detect loop type
-        // Check for 'as' keyword or '=>' for foreach loop
         if (strpos($loopExpr, ' as ') !== false || strpos($loopExpr, '=>') !== false) {
-            // foreach loop
             return $this->renderForeachLoop($node, $loopExpr, $attrs, $inner);
-        } else {
-            // for loop
-            return $this->renderForLoop($node, $loopExpr, $attrs, $inner);
         }
+        return $this->renderForLoop($node, $loopExpr, $attrs, $inner);
     }
 
     /**
-     * Render foreach loop
+     * Render foreach loop for elements
+     *
+     * @param Node $node
+     * @param string $loopExpr The loop expression
+     * @param string $attrs HTML attributes string
+     * @param string $inner Inner HTML
+     * @return string PHP foreach block
      */
     private function renderForeachLoop(Node $node, string $loopExpr, string $attrs, string $inner): string
     {
-        list($array, $vars) = array_map('trim', explode('=>', $loopExpr, 2));
-
-        // Check if key is included
-        if (strpos($vars, ',') !== false) {
-            // With key: array=>$key,$val
-            list($key, $val) = array_map('trim', explode(',', $vars, 2));
+        list($array, $vars) = array_map('trim', explode(' as ', $loopExpr, 2));
+        if (strpos($vars, '=>') !== false) {
+            list($key, $val) = array_map('trim', explode('=>', $vars, 2));
             $phpLoop = "foreach({$array} as {$key} => {$val})";
         } else {
-            // Without key: array=>$val
             $phpLoop = "foreach({$array} as {$vars})";
         }
 
         $isVoid = isset($this->voidElements[strtolower($node->tagName ?? '')]);
-        
-        if ($isVoid) {
-            return "<?php {$phpLoop}: ?>\n<{$node->tagName}{$attrs}>\n<?php endforeach; ?>";
-        }
-
-        return "<?php {$phpLoop}: ?>\n<{$node->tagName}{$attrs}>{$inner}</{$node->tagName}>\n<?php endforeach; ?>";
+        return $isVoid
+            ? "<?php {$phpLoop}: ?>\n<{$node->tagName}{$attrs}>\n<?php endforeach; ?>"
+            : "<?php {$phpLoop}: ?>\n<{$node->tagName}{$attrs}>{$inner}</{$node->tagName}>\n<?php endforeach; ?>";
     }
 
     /**
-     * Render for loop
+     * Render for loop for elements
+     *
+     * @param Node $node
+     * @param string $loopExpr The loop expression
+     * @param string $attrs HTML attributes string
+     * @param string $inner Inner HTML
+     * @return string PHP for block
      */
     private function renderForLoop(Node $node, string $loopExpr, string $attrs, string $inner): string
     {
         $isVoid = isset($this->voidElements[strtolower($node->tagName ?? '')]);
-        
-        if ($isVoid) {
-            return "<?php for({$loopExpr}): ?>\n<{$node->tagName}{$attrs}>\n<?php endfor; ?>";
-        }
-
-        return "<?php for({$loopExpr}): ?>\n<{$node->tagName}{$attrs}>{$inner}</{$node->tagName}>\n<?php endfor; ?>";
+        return $isVoid
+            ? "<?php for({$loopExpr}): ?>\n<{$node->tagName}{$attrs}>\n<?php endfor; ?>"
+            : "<?php for({$loopExpr}): ?>\n<{$node->tagName}{$attrs}>{$inner}</{$node->tagName}>\n<?php endfor; ?>";
     }
 
+    /**
+     * Render HTML attributes safely
+     *
+     * @param array<string, string|bool> $attributes
+     * @param string $tagName Tag name for exclusion
+     * @return string Rendered attributes as HTML
+     */
     private function renderAttributes(array $attributes, string $tagName): string
     {
         if (empty($attributes)) return '';
@@ -367,10 +389,7 @@ class Renderer
         $lowerTagName = strtolower($tagName);
         
         foreach ($attributes as $k => $v) {
-            if (strtolower($k) === $lowerTagName) {
-                continue;
-            }
-
+            if (strtolower($k) === $lowerTagName) continue;
             if ($v === true) {
                 $result .= " {$k}";
             } else {

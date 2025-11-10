@@ -1,16 +1,21 @@
 <?php
 declare(strict_types=1);
 
+namespace ExpoOne;
+
 /**
- * Tokenizer: HTML 문자열을 토큰으로 분해 (순수 파싱만 담당)
+ * Splits an HTML string into tokens.  
+ * This class performs pure parsing only and does not interpret or render tokens.
  */
 class Tokenizer
 {
     /**
-     * HTML 문자열을 토큰 배열로 변환
-     * 
-     * @param string $html
-     * @return array 토큰 배열
+     * Converts an HTML string into an array of tokens.
+     *
+     * Each token is an associative array with a `type` and `value` key, and optionally `parsed` data for tags.
+     *
+     * @param string $html The input HTML string.
+     * @return array<int, array<string, mixed>> List of tokens.
      */
     public function tokenize(string $html): array
     {
@@ -23,14 +28,14 @@ class Tokenizer
         $quoteChar = '';
 
         while ($i < $len) {
-            // PHP block 감지: {@ ... }
+            // Detect PHP block: {@ ... }
             if (!$inTag && !$inQuote && substr($html, $i, 2) === '{@') {
                 $this->flushTextBuffer($tokens, $buffer);
                 $i = $this->tokenizePhpBlock($html, $i, $len, $tokens);
                 continue;
             }
 
-            // 주석 감지
+            // Detect comment
             if (!$inTag && !$inQuote && $this->isCommentStart($html, $i)) {
                 $this->flushTextBuffer($tokens, $buffer);
                 $i = $this->tokenizeComment($html, $i, $len, $tokens);
@@ -39,7 +44,7 @@ class Tokenizer
 
             $ch = $html[$i];
 
-            // 태그 시작
+            // Tag start
             if (!$inTag && $ch === '<' && !$inQuote) {
                 $this->flushTextBuffer($tokens, $buffer);
                 $inTag = true;
@@ -50,12 +55,12 @@ class Tokenizer
                 continue;
             }
 
-            // 태그 내부 처리
+            // Inside tag
             if ($inTag) {
                 $buffer .= $ch;
 
-                // 인용부호 토글 (간단한 처리)
-                if (($ch === '"' || $ch === "'") && ($i === 0 || $html[$i-1] !== '\\')) {
+                // Handle quoted attributes
+                if (($ch === '"' || $ch === "'") && ($i === 0 || $html[$i - 1] !== '\\')) {
                     if ($inQuote && $ch === $quoteChar) {
                         $inQuote = false;
                         $quoteChar = '';
@@ -65,7 +70,7 @@ class Tokenizer
                     }
                 }
 
-                // 태그 종료
+                // Tag end
                 if ($ch === '>' && !$inQuote) {
                     $parsed = $this->parseTag($buffer);
                     $tokens[] = [
@@ -81,23 +86,31 @@ class Tokenizer
                 continue;
             }
 
-            // 일반 텍스트
+            // Plain text
             $buffer .= $ch;
             $i++;
         }
 
-        // 남은 버퍼 처리
+        // Process any remaining buffer
         $this->flushRemainingBuffer($tokens, $buffer, $inTag);
 
         return $tokens;
     }
 
     /**
-     * PHP 블록 토큰화: {@ ... }
-     * 내부는 완전한 raw text로 처리
+     * Tokenizes a PHP block: {@ ... }
+     *
+     * Everything inside the block is treated as raw text.
+     *
+     * @param string $html The full HTML string.
+     * @param int $start The starting position of the block.
+     * @param int $len The total string length.
+     * @param array<int, array<string, mixed>> &$tokens The token list.
+     * @return int The new position after processing the block.
      */
     private function tokenizePhpBlock(string $html, int $start, int $len, array &$tokens): int
     {
+        // We have not yet implemented functionality to handle nested braces here.
         $depth = 1;
         $i = $start + 2; // Skip '{@'
         $content = '';
@@ -115,7 +128,6 @@ class Tokenizer
             if ($ch === '}') {
                 $depth--;
                 if ($depth === 0) {
-                    // 종료
                     break;
                 }
                 $content .= $ch;
@@ -127,7 +139,6 @@ class Tokenizer
             $i++;
         }
 
-        // Add as text token (will be processed by renderer)
         $tokens[] = [
             'type' => 'text',
             'value' => '{@' . $content . '}'
@@ -137,7 +148,11 @@ class Tokenizer
     }
 
     /**
-     * 주석 시작 여부 확인
+     * Checks whether the current position marks the start of a comment.
+     *
+     * @param string $html The HTML string.
+     * @param int $pos Current index in the string.
+     * @return bool True if a comment starts at this position.
      */
     private function isCommentStart(string $html, int $pos): bool
     {
@@ -145,14 +160,20 @@ class Tokenizer
     }
 
     /**
-     * 주석을 토큰화하고 다음 위치 반환
+     * Tokenizes an HTML comment and returns the next parsing position.
+     *
+     * @param string $html The HTML string.
+     * @param int $start The starting index of the comment.
+     * @param int $len The total string length.
+     * @param array<int, array<string, mixed>> &$tokens The token list.
+     * @return int The position after the comment ends.
      */
     private function tokenizeComment(string $html, int $start, int $len, array &$tokens): int
     {
         $commentEnd = strpos($html, '-->', $start + 4);
         
         if ($commentEnd === false) {
-            // 종료되지 않은 주석
+            // Unclosed comment
             $commentValue = substr($html, $start + 4);
             $tokens[] = [
                 'type' => 'comment',
@@ -161,7 +182,7 @@ class Tokenizer
             return $len;
         }
         
-        // 정상 종료된 주석
+        // Properly closed comment
         $commentValue = substr($html, $start + 4, $commentEnd - $start - 4);
         $tokens[] = [
             'type' => 'comment',
@@ -171,7 +192,10 @@ class Tokenizer
     }
 
     /**
-     * 텍스트 버퍼를 토큰으로 추가
+     * Flushes the text buffer into a token if it is not empty.
+     *
+     * @param array<int, array<string, mixed>> &$tokens The token list.
+     * @param string &$buffer The text buffer.
      */
     private function flushTextBuffer(array &$tokens, string &$buffer): void
     {
@@ -182,7 +206,11 @@ class Tokenizer
     }
 
     /**
-     * 남은 버퍼 처리
+     * Flushes any remaining buffer when the parsing loop ends.
+     *
+     * @param array<int, array<string, mixed>> &$tokens The token list.
+     * @param string $buffer The remaining buffer content.
+     * @param bool $inTag Whether the buffer is part of an unfinished tag.
      */
     private function flushRemainingBuffer(array &$tokens, string $buffer, bool $inTag): void
     {
@@ -202,17 +230,20 @@ class Tokenizer
     }
 
     /**
-     * 기본 태그 파서
+     * Parses a tag and returns its components (tag name, attributes, etc.).
+     *
+     * @param string $tag The full tag string.
+     * @return array<string, mixed> Parsed tag data.
      */
     private function parseTag(string $tag): array
     {
         $isClosing = (bool) preg_match('/^<\s*\//', $tag);
         $isSelfClosing = (bool) preg_match('/\/\s*>$/', $tag);
 
-        // 태그명 추출
+        // Extract tag name
         $tagName = $this->extractTagName($tag, $isClosing);
 
-        // 속성 추출
+        // Extract attributes if applicable
         $attributes = [];
         if (!$isClosing) {
             $attributes = $this->extractAttributes($tag, $tagName);
@@ -227,7 +258,11 @@ class Tokenizer
     }
 
     /**
-     * 태그명 추출
+     * Extracts the tag name from a tag string.
+     *
+     * @param string $tag The tag string.
+     * @param bool $isClosing Whether the tag is a closing tag.
+     * @return string The tag name.
      */
     private function extractTagName(string $tag, bool $isClosing): string
     {
@@ -243,13 +278,19 @@ class Tokenizer
     }
 
     /**
-     * 속성 추출
+     * Extracts attributes from a tag string.
+     *
+     * Handles double-quoted, single-quoted, and unquoted values.
+     *
+     * @param string $tag The full tag string.
+     * @param string $tagName The already extracted tag name.
+     * @return array<string, string|bool> Associative array of attributes.
      */
     private function extractAttributes(string $tag, string $tagName): array
     {
         $attributes = [];
         
-        // 태그명 이후부터 속성 파싱
+        // Remove tag name and trailing angle brackets
         $afterTagName = preg_replace('/^<\s*' . preg_quote($tagName, '/') . '\s*/i', '', $tag);
         $afterTagName = preg_replace('/\/?\s*>$/', '', $afterTagName);
         

@@ -1,11 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once 'Lexer.php';
-require_once 'ParseException.php';
-require_once 'Validator.php';
-require_once 'Filter.php';
-require_once 'Node.php';
+namespace ExpoOne;
 
 /**
  * Parser with integrated directive handler

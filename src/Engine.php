@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
 
-require_once 'Parser.php';
+namespace ExpoOne;
+
+require __DIR__ . '/../vendor/autoload.php';
 
 class Engine
 {
@@ -13,7 +15,11 @@ class Engine
     }
 
     /**
-     * HTML 템플릿 파일을 
+     * Reads an HTML template file.
+     *
+     * @param string $filepath The path including the file name.
+     * @return string The parsed and rendered template content.
+     * @throws ParseException If the file is not found or cannot be read.
      */
     public function parseFile(string $filepath): string
     {
@@ -30,7 +36,10 @@ class Engine
     }
 
     /**
-     * HTML 템플릿 문자열을 파싱하고 렌더링
+     * Parses and renders an HTML template string.
+     *
+     * @param string $html The HTML template content.
+     * @return string The rendered output.
      */
     public function parseString(string $html): string
     {
@@ -45,7 +54,12 @@ class Engine
     }
 
     /**
-     * 템플릿 파일을 파싱하여 PHP 파일로 저장
+     * Parses a template file and saves it as a compiled PHP file.
+     *
+     * @param string $templatePath The path including the source HTML file name.
+     * @param string $outputPath The path to save the compiled PHP file.
+     * @return void
+     * @throws ParseException If parsing fails.
      */
     public function compile(string $templatePath, string $outputPath): void
     {
@@ -54,18 +68,3 @@ class Engine
     }
 }
 
-// 사용 예시
-if (basename(__FILE__) === basename($_SERVER['SCRIPT_NAME'])) {
-    $filename = './index.html';
-
-    try {
-        $engine = new Engine();
-        if (file_exists($filename)) {
-            echo $engine->parseFile($filename);
-        } else {
-            echo "Template file '".$filename."' not found.";
-        }
-    } catch (ParseException $e) {
-        echo "Parse error: " . $e->getMessage();
-    }
-}

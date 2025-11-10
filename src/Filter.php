@@ -1,11 +1,19 @@
 <?php
 declare(strict_types=1);
 
+namespace ExpoOne;
+
 /**
- * Filter processor for variable output
+ * Handles variable filters and escaping within template expressions.
+ * Provides a set of built-in filters (e.g. trim, upper, date, json_encode)
+ * and escape handlers (e.g. htmlspecialchars, rawurlencode).
  */
 class Filter
 {
+    /**
+     * @var array<string, array<string, mixed>>
+     * Registry of available filters and their configurations.
+     */
     private static array $filters = [
         'escapejs' => [
             'method' => 'json_encode',
@@ -61,6 +69,10 @@ class Filter
         ]
     ];
 
+    /**
+     * @var array<string, string|null>
+     * Escape handlers used for auto-escaping or disabling escaping.
+     */
     private static array $escapeHandlers = [
         'auto' => 'htmlspecialchars',
         'autoescape' => 'htmlspecialchars',
@@ -70,16 +82,17 @@ class Filter
     ];
 
     /**
-     * Parse variable expression with filters
-     * Example: $var|lower|escape or $timestamp|date:'n/j H:i'
+     * Parses a variable expression that may include one or more filters.
+     *
+     * @param string $expr The raw variable expression (e.g. "$user | upper | escape").
+     * @return string The generated PHP expression as a string.
+     * @throws ParseException If the expression or filter is invalid.
      */
     public static function parseVariableExpression(string $expr): string
     {
-        // Split by pipe to get variable and filters
         $parts = explode('|', $expr);
         $var = trim(array_shift($parts));
         
-        // Validate variable expression
         if (!preg_match('/^[\$a-zA-Z_][\w\[\]\->\$\(\)\'"., ]*$/', $var)) {
             throw new ParseException("Invalid variable expression: {$var}");
         }
@@ -88,18 +101,17 @@ class Filter
         $needsEscape = true;
         $escapeHandler = 'htmlspecialchars';
 
-        // Process each filter in sequence
         foreach ($parts as $filterExpr) {
             $filterExpr = trim($filterExpr);
             
-            // Check for escape handler
+            // Handle escape-related filters
             if (isset(self::$escapeHandlers[$filterExpr])) {
                 $escapeHandler = self::$escapeHandlers[$filterExpr];
                 $needsEscape = ($escapeHandler !== null);
                 continue;
             }
 
-            // Parse filter name and option (filter:option)
+            // Split into filter name and option (e.g., "date:'Y-m-d'")
             $colonPos = strpos($filterExpr, ':');
             if ($colonPos !== false) {
                 $filterName = trim(substr($filterExpr, 0, $colonPos));
@@ -109,15 +121,15 @@ class Filter
                 $option = null;
             }
 
-            // Special handling for link filter
+            // Handle special case for "link" filter
             if ($filterName === 'link') {
                 return self::applyLinkFilter($code, $option, $escapeHandler);
             }
 
-            // Apply regular filter
+            // Apply general filters
             $code = self::applyFilter($code, $filterName, $option);
             
-            // Update escape requirement based on filter config
+            // Update escape requirements based on filter definition
             if (isset(self::$filters[$filterName])) {
                 $filterConfig = self::$filters[$filterName];
                 if (isset($filterConfig['needsEscape'])) {
@@ -126,7 +138,7 @@ class Filter
             }
         }
 
-        // Apply final escape if needed
+        // Apply final escaping if required
         if ($needsEscape && $escapeHandler) {
             if ($escapeHandler === 'htmlspecialchars') {
                 $code = "{$escapeHandler}(\${$code}, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')";
@@ -139,7 +151,13 @@ class Filter
     }
 
     /**
-     * Apply filter to variable
+     * Applies a registered filter to a variable.
+     *
+     * @param string $var The variable name (without `$` prefix).
+     * @param string $filterName The name of the filter.
+     * @param string|null $option Optional filter parameter.
+     * @return string The PHP expression applying the filter.
+     * @throws ParseException If the filter does not exist.
      */
     private static function applyFilter(string $var, string $filterName, ?string $option): string
     {
@@ -150,7 +168,6 @@ class Filter
         $filter = self::$filters[$filterName];
         $method = $filter['method'];
 
-        // Use default option if not provided
         if ($option === null && isset($filter['defaultOption'])) {
             $option = $filter['defaultOption'];
         }
@@ -162,12 +179,15 @@ class Filter
             return "number_format(\${$var}/1000, {$option}).'K'";
         }
 
-        // Apply filter method
         return $option !== null ? "{$method}(\${$var}, {$option})" : "{$method}(\${$var})";
     }
 
     /**
-     * Apply escape handler
+     * Applies the selected escape handler to a variable.
+     *
+     * @param string $var The variable name (without `$` prefix).
+     * @param string $handler The escape handler function name.
+     * @return string The PHP expression for escaped output.
      */
     private static function applyEscape(string $var, string $handler): string
     {
@@ -179,7 +199,12 @@ class Filter
     }
 
     /**
-     * Special handling for link filter
+     * Applies the "link" filter, converting a variable into an HTML anchor element.
+     * 
+     * @param string $var The variable name (without `$` prefix).
+     * @param string|null $option Optional link text.
+     * @param string|null $escapeHandler Escape handler for sanitization.
+     * @return string The PHP expression generating the HTML link.
      */
     private static function applyLinkFilter(string $var, ?string $option, ?string $escapeHandler): string
     {

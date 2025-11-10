@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-require_once 'Tokenizer.php';
+namespace ExpoOne;
 
 /**
  * HtmlLexer: 토큰 분석 및 검증
