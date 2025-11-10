@@ -12,6 +12,8 @@ ExpoOne is a lightweight yet secure PHP templating engine that clearly separates
 *   **Asset Management**: `<load>` and `<unload>` tags to automatically inject CSS and JavaScript files into the `<head>` or `<body>` of the rendered output, with sorting capabilities.
 *   **Security Validation**: Built-in `Validator` prevents the use of dangerous PHP functions, superglobals, and shell execution within template code.
 
+Usage is identical to existing XpressEngine templates. If you encounter any errors while using it, please submit an issue.
+
 ## Installation
 
 Assuming you are using Composer, ensure the `ExpoOne` namespace is correctly configured for autoloading in your project.
