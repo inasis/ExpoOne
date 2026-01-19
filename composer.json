@@ -1,8 +1,6 @@
 {
     "name": "inasis/expoone",
-    "require": {
-        "inasis/expoone": "dev-main"
-    },
+    "version": "dev-main",
     "autoload": {
         "psr-4": {
             "ExpoOne\\": "src/"
@@ -13,5 +11,7 @@
             "type": "vcs",
             "url": "https://github.com/inasis/ExpoOne.git"
         }
-    ]
+    ],
+    "minimum-stability": "dev",
+    "prefer-stable": true
 }
